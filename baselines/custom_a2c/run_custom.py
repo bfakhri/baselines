@@ -8,6 +8,12 @@ from baselines.common.vec_env.subproc_vec_env import SubprocVecEnv
 from baselines.common.atari_wrappers import make_atari, wrap_deepmind
 from baselines.a2c.policies import CnnPolicy, LstmPolicy, LnLstmPolicy
 
+# Import our custom Environment
+import sys
+sys.path.insert(0, '../../gym-img/')
+import gym_img.envs
+
+
 def train(env_id, num_timesteps, seed, policy, lrschedule, num_cpu):
     def make_env(rank):
         def _thunk():
