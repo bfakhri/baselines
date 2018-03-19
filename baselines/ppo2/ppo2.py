@@ -127,11 +127,11 @@ class Runner(object):
         policy = model.act_model.deepcopy()
         # Init policy
 
-	while(not done):
+        while(not done):
             # Needs some tweaking
             actions, values, self.states, neglogpacs = policy.step(obs, states, dones)
-	    (obs, r, done, info) = env.step(1)
-	    total_r += r
+            (obs, r, done, info) = env.step(1)
+            total_r += r
             total_steps += 1
         # TB Reporting
         self.summary.value.add(tag='Validation_Reward', simple_value=total_r)
