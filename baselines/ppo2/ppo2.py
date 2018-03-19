@@ -98,7 +98,7 @@ class Model(object):
 
 class Runner(object):
 
-    def __init__(self, *, env, model, nsteps, gamma, lam):
+    def __init__(self, *, env, model, nsteps, gamma, lam, writer=None):
         self.env = env
         self.model = model
         nenv = env.num_envs
@@ -109,8 +109,38 @@ class Runner(object):
         self.nsteps = nsteps
         self.states = model.initial_state
         self.dones = [False for _ in range(nenv)]
+        # For summaries
+        self.writer = writer
+        self.summary = tf.Summary()
 
-    def run(self):
+        self.validation_num = 0
+
+    # NEEDS MORE WORK
+    def validate(self):
+        val_env = self.env.deepcopy()
+        obs = env.reset()
+        done = False
+        total_r = 0
+        total_steps = 0
+
+        # Copy policy
+        policy = model.act_model.deepcopy()
+        # Init policy
+
+	while(not done):
+            # Needs some tweaking
+            actions, values, self.states, neglogpacs = policy.step(obs, states, dones)
+	    (obs, r, done, info) = env.step(1)
+	    total_r += r
+            total_steps += 1
+        # TB Reporting
+        self.summary.value.add(tag='Validation_Reward', simple_value=total_r)
+        self.summary.value.add(tag='Validation_Episode_length', simple_value=total_steps)
+        self.writer.add_summary(self.summary, update_num)
+
+
+
+    def run(self, update_num):
         mb_obs, mb_rewards, mb_actions, mb_values, mb_dones, mb_neglogpacs = [],[],[],[],[],[]
         mb_states = self.states
         epinfos = []
@@ -129,6 +159,11 @@ class Runner(object):
         #batch of steps to batch of rollouts
         mb_obs = np.asarray(mb_obs, dtype=self.obs.dtype)
         mb_rewards = np.asarray(mb_rewards, dtype=np.float32)
+
+        # TB Reporting
+        self.summary.value.add(tag='Avg_Batch_Reward', simple_value=mb_rewards.mean())
+        self.writer.add_summary(self.summary, update_num)
+        
         mb_actions = np.asarray(mb_actions)
         mb_values = np.asarray(mb_values, dtype=np.float32)
         mb_neglogpacs = np.asarray(mb_neglogpacs, dtype=np.float32)
@@ -188,7 +223,7 @@ def learn(*, policy, env, nsteps, total_timesteps, ent_coef, lr,
         with open(osp.join(logger.get_dir(), 'make_model.pkl'), 'wb') as fh:
             fh.write(cloudpickle.dumps(make_model))
     model = make_model()
-    runner = Runner(env=env, model=model, nsteps=nsteps, gamma=gamma, lam=lam)
+    runner = Runner(env=env, model=model, nsteps=nsteps, gamma=gamma, lam=lam, writer=model.writer)
 
     epinfobuf = deque(maxlen=100)
     tfirststart = time.time()
@@ -201,10 +236,11 @@ def learn(*, policy, env, nsteps, total_timesteps, ent_coef, lr,
         frac = 1.0 - (update - 1.0) / nupdates
         lrnow = lr(frac)
         cliprangenow = cliprange(frac)
-        obs, returns, masks, actions, values, neglogpacs, states, epinfos = runner.run() #pylint: disable=E0632
+        obs, returns, masks, actions, values, neglogpacs, states, epinfos = runner.run(update) #pylint: disable=E0632
         returns_summary = tf.summary.scalar('Returns', returns.mean())
         epinfobuf.extend(epinfos)
         mblossvals = []
+        
         if states is None: # nonrecurrent version
             inds = np.arange(nbatch)
             for _ in range(noptepochs):
@@ -246,6 +282,7 @@ def learn(*, policy, env, nsteps, total_timesteps, ent_coef, lr,
             for (lossval, lossname) in zip(lossvals, model.loss_names):
                 logger.logkv(lossname, lossval)
             logger.dumpkvs()
+            
         if save_interval and (update % save_interval == 0 or update == 1) and logger.get_dir():
             checkdir = osp.join(logger.get_dir(), 'checkpoints')
             os.makedirs(checkdir, exist_ok=True)
