@@ -117,16 +117,15 @@ class Runner(object):
         self.summary = tf.Summary()
 
         self.validation_num = 0
+        self.val_env = VecFrameStack(make_atari_env(env.env_id, env.num_envs, 100), 4, env_id=env.env_id)
 
     # NEEDS MORE WORK
     def validate(self, val_num):
-        #val_env = copy.deepcopy(self.env)
-        val_env = VecFrameStack(make_atari_env(self.env.env_id, self.env.num_envs, 100), 4, env_id=self.env.env_id)
-        obs = val_env.reset()
-        dones = np.zeros((val_env.num_envs), dtype=bool)
-        total_r = np.zeros(val_env.num_envs, dtype=float)
-        total_steps = np.zeros(val_env.num_envs, dtype=float)
-        static_dones = np.zeros((val_env.num_envs), dtype=bool)
+        obs = self.val_env.reset()
+        dones = np.zeros((self.val_env.num_envs), dtype=bool)
+        total_r = np.zeros(self.val_env.num_envs, dtype=float)
+        total_steps = np.zeros(self.val_env.num_envs, dtype=float)
+        static_dones = np.zeros((self.val_env.num_envs), dtype=bool)
 
         # Copy policy
         #val_policy = copy.deepcopy(self.model.act_model)
@@ -136,7 +135,7 @@ class Runner(object):
 
         while(not np.all(static_dones)):
             actions, values, states, neglogpacs = val_policy.step(obs, dones)
-            (obs, rewards, dones, info) = val_env.step(actions)
+            (obs, rewards, dones, info) = self.val_env.step(actions)
             total_r += np.multiply(np.logical_not(static_dones), rewards)
             static_dones = np.logical_or(dones, static_dones)
             total_steps += np.multiply(np.logical_not(static_dones), 1)
