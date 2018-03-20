@@ -8,6 +8,9 @@ from baselines import logger
 from collections import deque
 from baselines.common import explained_variance
 from datetime import datetime
+import copy
+from baselines.common.vec_env.vec_frame_stack import VecFrameStack
+from baselines.common.cmd_util import make_atari_env
 
 class Model(object):
     def __init__(self, *, policy, ob_space, ac_space, nbatch_act, nbatch_train,
@@ -116,27 +119,32 @@ class Runner(object):
         self.validation_num = 0
 
     # NEEDS MORE WORK
-    def validate(self):
-        val_env = self.env.deepcopy()
-        obs = env.reset()
-        done = False
-        total_r = 0
-        total_steps = 0
+    def validate(self, val_num):
+        #val_env = copy.deepcopy(self.env)
+        val_env = VecFrameStack(make_atari_env(self.env.env_id, self.env.num_envs, 100), 4, env_id=self.env.env_id)
+        obs = val_env.reset()
+        dones = np.zeros((val_env.num_envs), dtype=bool)
+        total_r = np.zeros(val_env.num_envs, dtype=float)
+        total_steps = np.zeros(val_env.num_envs, dtype=float)
+        static_dones = np.zeros((val_env.num_envs), dtype=bool)
 
         # Copy policy
-        policy = model.act_model.deepcopy()
+        #val_policy = copy.deepcopy(self.model.act_model)
+        val_policy = self.model.act_model
         # Init policy
+        #states = val_policy.states
 
-        while(not done):
-            # Needs some tweaking
-            actions, values, self.states, neglogpacs = policy.step(obs, states, dones)
-            (obs, r, done, info) = env.step(1)
-            total_r += r
-            total_steps += 1
+        while(not np.all(static_dones)):
+            actions, values, states, neglogpacs = val_policy.step(obs, dones)
+            (obs, rewards, dones, info) = val_env.step(actions)
+            total_r += np.multiply(np.logical_not(static_dones), rewards)
+            static_dones = np.logical_or(dones, static_dones)
+            total_steps += np.multiply(np.logical_not(static_dones), 1)
+
         # TB Reporting
-        self.summary.value.add(tag='Validation_Reward', simple_value=total_r)
-        self.summary.value.add(tag='Validation_Episode_length', simple_value=total_steps)
-        self.writer.add_summary(self.summary, update_num)
+        self.summary.value.add(tag='Mean_Validation_Reward', simple_value=total_r.mean())
+        self.summary.value.add(tag='Mean_Validation_Episode_length', simple_value=total_steps.mean())
+        self.writer.add_summary(self.summary, val_num)
 
 
 
@@ -240,6 +248,11 @@ def learn(*, policy, env, nsteps, total_timesteps, ent_coef, lr,
         returns_summary = tf.summary.scalar('Returns', returns.mean())
         epinfobuf.extend(epinfos)
         mblossvals = []
+
+        # Validation of Model
+        if(update%10 == 0):
+            print("VALIDATING", str(update))
+            runner.validate(update)
         
         if states is None: # nonrecurrent version
             inds = np.arange(nbatch)
