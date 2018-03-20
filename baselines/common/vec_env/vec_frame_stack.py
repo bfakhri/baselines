@@ -6,9 +6,10 @@ class VecFrameStack(VecEnvWrapper):
     """
     Vectorized environment base class
     """
-    def __init__(self, venv, nstack):
+    def __init__(self, venv, nstack, env_id):
         self.venv = venv
         self.nstack = nstack
+        self.env_id = env_id
         wos = venv.observation_space # wrapped ob space
         low = np.repeat(wos.low, self.nstack, axis=-1)
         high = np.repeat(wos.high, self.nstack, axis=-1)
