@@ -213,6 +213,28 @@ class LazyFrames(object):
     def __getitem__(self, i):
         return self._force()[i]
 
+"""
+CONOR'S CODE
+"""
+def make_dm(level, fps, width, height, video):
+    config={
+        'fps': str(fps),
+        'width': str(width),
+        'height': str(height)
+    }
+    if video:
+        config['video'] = video
+
+    #create the DeepMind environment here
+    env = deepmind_lab.Lab(level, ['RGB_INTERLACED'], config=config)
+
+    env.reset()
+
+    return env
+"""
+/CONOR'S CODE
+"""
+
 def make_atari(env_id):
     env = gym.make(env_id)
     #assert 'NoFrameskip' in env.spec.id

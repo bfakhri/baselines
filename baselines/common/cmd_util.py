@@ -7,9 +7,32 @@ import gym
 from baselines import logger
 from baselines.bench import Monitor
 from baselines.common import set_global_seeds
-from baselines.common.atari_wrappers import make_atari, wrap_deepmind
+from baselines.common.atari_wrappers import make_atari, make_dm, wrap_deepmind
 from baselines.common.vec_env.subproc_vec_env import SubprocVecEnv
 from mpi4py import MPI
+
+"""
+CONOR'S CODE
+"""
+def make_dm_env(env_id, num_env, seed, wrapper_kwargs=None, start_index=0):
+    """
+    Create a wrapped, monitored SubprocVecEnv for DeepMind
+    """
+    if wrapper_kwargs is None: wrapper_kwargs = {}
+    def make_enf(rank):
+        def _thunk():
+            #make_dm(Level, fps, width, height, video_on)
+            env = make_dm(env_id, 60, 400, 300, True)
+            env.seed(seed + rank)
+            """ Does Monitor() Work with DeepMind environments? """
+            env = Monitor(env, logger.get_dir() and os.path.join(logger.get_dir(), str(rank)))
+            return wrap_deepmind(env, **wrapper_kwargs)
+        return _thunk
+    set_global_seeds(seed)
+    return SubprocVecEnv([make_env(i + start_index) for i in range(num_env)])
+"""
+/CONOR'S CODE
+"""
 
 def make_atari_env(env_id, num_env, seed, wrapper_kwargs=None, start_index=0):
     """
@@ -42,6 +65,22 @@ def arg_parser():
     """
     import argparse
     return argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+
+"""
+CONOR'S CODE
+"""
+def dm_arg_parser():
+    """
+    Create an argparse.ArgumentParser for run_dm.py.
+    """
+    parser = arg_parser()
+    parser.add_argument('--env', help='environment ID', default='empty_room_test')
+    parser.add_argument('--seed', help='RNG seed', type=int, default=0)
+    parser.add_argument('--num-timesteps', type=int, default=int(10e6))
+    return parser
+"""
+/CONOR'S CODE
+"""
 
 def atari_arg_parser():
     """
