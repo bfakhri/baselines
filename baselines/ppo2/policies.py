@@ -128,6 +128,48 @@ class CnnPolicy(object):
         self.vf = vf
         self.step = step
         self.value = value
+        
+class CnnPolicy_TSM(object):
+
+    def __init__(self, sess, ob_space, ac_space, nbatch, nsteps, reuse=False): #pylint: disable=W0613
+        nh, nw, nc = ob_space.shape
+        ob_shape = (nbatch, nh, nw, nc)
+        nact = ac_space.n
+        X = tf.placeholder(tf.uint8, ob_shape) #obs
+        with tf.variable_scope("model", reuse=reuse):
+            h = nature_cnn(X)
+            pi = fc(h, 'pi', nact, init_scale=0.01)
+            vf = fc(h, 'v', 1)[:,0]
+
+        phi_i = tf.placeholder(tf.float32, [None, h.get_shape().dims[1]])
+        phi_j = tf.placeholder(tf.float32, [None, h.get_shape().dims[1]])
+        combined_phi = tf.concat([phi_i, phi_j], axis=1)
+        with tf.variable_scope("TSM", reuse=reuse):
+            tsm = fc(combined_phi, 'tsm', 1)[:,0]
+
+        self.pdtype = make_pdtype(ac_space)
+        self.pd = self.pdtype.pdfromflat(pi)
+
+        a0 = self.pd.sample()
+        neglogp0 = self.pd.neglogp(a0)
+        self.initial_state = None
+
+        def step(ob, *_args, **_kwargs):
+            phi, a, v, neglogp = sess.run([h, a0, vf, neglogp0], {X:ob})
+            return phi, a, v, self.initial_state, neglogp
+
+        def value(ob, *_args, **_kwargs):
+            return sess.run(vf, {X:ob})
+
+        self.X = X
+        self.pi = pi
+        self.vf = vf
+        self.h = h
+        self.tsm = tsm 
+        self.step = step
+        self.value = value
+        self.ph_phi_i = phi_i
+        self.ph_phi_j = phi_j
 
 class MlpPolicy(object):
     def __init__(self, sess, ob_space, ac_space, nbatch, nsteps, reuse=False): #pylint: disable=W0613

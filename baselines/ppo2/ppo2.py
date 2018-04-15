@@ -11,6 +11,7 @@ from datetime import datetime
 import copy
 from baselines.common.vec_env.vec_frame_stack import VecFrameStack
 from baselines.common.cmd_util import make_atari_env
+import itertools
 
 class Model(object):
     def __init__(self, *, policy, ob_space, ac_space, nbatch_act, nbatch_train,
@@ -27,6 +28,10 @@ class Model(object):
         OLDVPRED = tf.placeholder(tf.float32, [None])
         LR = tf.placeholder(tf.float32, [])
         CLIPRANGE = tf.placeholder(tf.float32, [])
+
+        # TSM Placeholder for time delta 'labels' 
+        self.time_delta = tf.placeholder(tf.float32, [None])
+
 
         neglogpac = train_model.pd.neglogp(A)
         entropy = tf.reduce_mean(train_model.pd.entropy())
@@ -56,11 +61,17 @@ class Model(object):
         
         self.return_summary = tf.summary.scalar('Returns', tf.reduce_mean(returns_loop))
 
+        tsm_trainer = tf.train.AdamOptimizer(learning_rate=LR, epsilon=1e-5)
+        self.tsm_loss = tf.losses.mean_squared_error(self.time_delta, train_model.tsm)
+        tsm_train_step = tsm_trainer.minimize(self.tsm_loss)
+
+
         # For TB
         self.writer = tf.summary.FileWriter('./logs/'+str(datetime.now()))
         self.writer.add_graph(sess.graph) 
 
         def train(update, lr, cliprange, obs, returns, masks, actions, values, neglogpacs, states=None):
+
             rs_c = sess.run(self.return_summary, feed_dict={returns_loop: returns})
             self.writer.add_summary(rs_c, update)
 
@@ -77,6 +88,31 @@ class Model(object):
             )[:-1]
         self.loss_names = ['policy_loss', 'value_loss', 'policy_entropy', 'approxkl', 'clipfrac']
 
+        def train_tsm(phis, lr):
+            # Make phis shape = (nenvs, steps_per_batch, nfeatures)
+            phis = phis.swapaxes(0,1)
+
+            steps_per_batch = phis.shape[1]
+            indexes = np.arange(steps_per_batch)
+
+            index_pairs = list(itertools.permutations(indexes, 2))
+
+            for env in range(phis.shape[0]):
+                # make a minibatch
+                phi_is = np.zeros((len(index_pairs), phis.shape[2]))
+                phi_js = np.zeros((len(index_pairs), phis.shape[2]))
+                time_delta = np.zeros(len(index_pairs))
+
+                # Create arrs
+                for idx,pair in enumerate(index_pairs):
+                    time_delta[idx] = abs(pair[0] - pair[1])
+                    phi_is[idx] = phis[env, pair[0], :]
+                    phi_js[idx] = phis[env, pair[1], :]
+
+                loss, train = sess.run([self.tsm_loss, tsm_train_step], feed_dict={self.train_model.ph_phi_i: phi_is, self.train_model.ph_phi_j: phi_js, self.time_delta: time_delta, LR:lr})
+                print("TSM Loss: ", loss)
+
+
         def save(save_path):
             ps = sess.run(params)
             joblib.dump(ps, save_path)
@@ -90,6 +126,7 @@ class Model(object):
             # If you want to load weights, also save/load observation scaling inside VecNormalize
 
         self.train = train
+        self.train_tsm = train_tsm
         self.train_model = train_model
         self.act_model = act_model
         self.step = act_model.step
@@ -107,6 +144,7 @@ class Runner(object):
         nenv = env.num_envs
         self.obs = np.zeros((nenv,) + env.observation_space.shape, dtype=model.train_model.X.dtype.name)
         self.obs[:] = env.reset()
+        self.phis = np.zeros((nenv,) + tuple(model.train_model.h.shape.as_list()), dtype=model.train_model.h.dtype.name)
         self.gamma = gamma
         self.lam = lam
         self.nsteps = nsteps
@@ -134,7 +172,7 @@ class Runner(object):
         #states = val_policy.states
 
         while(not np.all(static_dones)):
-            actions, values, states, neglogpacs = val_policy.step(obs, dones)
+            phi, actions, values, states, neglogpacs = val_policy.step(obs, dones)
             (obs, rewards, dones, info) = self.val_env.step(actions)
             total_r += np.multiply(np.logical_not(static_dones), rewards)
             static_dones = np.logical_or(dones, static_dones)
@@ -148,12 +186,13 @@ class Runner(object):
 
 
     def run(self, update_num):
-        mb_obs, mb_rewards, mb_actions, mb_values, mb_dones, mb_neglogpacs = [],[],[],[],[],[]
+        mb_obs, mb_phis, mb_rewards, mb_actions, mb_values, mb_dones, mb_neglogpacs = [],[],[],[],[],[], []
         mb_states = self.states
         epinfos = []
         for _ in range(self.nsteps):
-            actions, values, self.states, neglogpacs = self.model.step(self.obs, self.states, self.dones)
+            phis, actions, values, self.states, neglogpacs = self.model.step(self.obs, self.states, self.dones)
             mb_obs.append(self.obs.copy())
+            mb_phis.append(phis)
             mb_actions.append(actions)
             mb_values.append(values)
             mb_neglogpacs.append(neglogpacs)
@@ -165,6 +204,7 @@ class Runner(object):
             mb_rewards.append(rewards)
         #batch of steps to batch of rollouts
         mb_obs = np.asarray(mb_obs, dtype=self.obs.dtype)
+        mb_phis = np.asarray(mb_phis, dtype=self.phis.dtype)
         mb_rewards = np.asarray(mb_rewards, dtype=np.float32)
 
         # TB Reporting
@@ -191,7 +231,7 @@ class Runner(object):
             mb_advs[t] = lastgaelam = delta + self.gamma * self.lam * nextnonterminal * lastgaelam
         mb_returns = mb_advs + mb_values
         return (*map(sf01, (mb_obs, mb_returns, mb_dones, mb_actions, mb_values, mb_neglogpacs)),
-            mb_states, epinfos)
+            mb_states, epinfos), mb_phis
 # obs, returns, masks, actions, values, neglogpacs, states = runner.run()
 def sf01(arr):
     """
@@ -243,7 +283,7 @@ def learn(*, policy, env, nsteps, total_timesteps, ent_coef, lr,
         frac = 1.0 - (update - 1.0) / nupdates
         lrnow = lr(frac)
         cliprangenow = cliprange(frac)
-        obs, returns, masks, actions, values, neglogpacs, states, epinfos = runner.run(update) #pylint: disable=E0632
+        (obs, returns, masks, actions, values, neglogpacs, states, epinfos), phis = runner.run(update) #pylint: disable=E0632
         returns_summary = tf.summary.scalar('Returns', returns.mean())
         epinfobuf.extend(epinfos)
         mblossvals = []
@@ -262,6 +302,7 @@ def learn(*, policy, env, nsteps, total_timesteps, ent_coef, lr,
                     mbinds = inds[start:end]
                     slices = (arr[mbinds] for arr in (obs, returns, masks, actions, values, neglogpacs))
                     mblossvals.append(model.train(update, lrnow, cliprangenow, *slices))
+                    model.train_tsm(phis, lrnow)
         else: # recurrent version
             assert nenvs % nminibatches == 0
             envsperbatch = nenvs // nminibatches
