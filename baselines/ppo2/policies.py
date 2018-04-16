@@ -145,7 +145,9 @@ class CnnPolicy_TSM(object):
         phi_j = tf.placeholder(tf.float32, [None, h.get_shape().dims[1]])
         combined_phi = tf.concat([phi_i, phi_j], axis=1)
         with tf.variable_scope("TSM", reuse=reuse):
-            tsm = fc(combined_phi, 'tsm', 1)[:,0]
+            tsm_h = fc(combined_phi, 'tsm_h', 1024)
+            tsm = tf.squeeze(fc(tsm_h, 'tsm', 1))
+            print(tsm.shape)
 
         self.pdtype = make_pdtype(ac_space)
         self.pd = self.pdtype.pdfromflat(pi)
