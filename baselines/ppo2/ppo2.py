@@ -86,31 +86,46 @@ class Model(object):
                 [pg_loss, vf_loss, entropy, approxkl, clipfrac, _train],
                 td_map
             )[:-1]
+
         self.loss_names = ['policy_loss', 'value_loss', 'policy_entropy', 'approxkl', 'clipfrac']
 
-        def train_tsm(phis, lr):
+        def train_tsm(obs, phis, lr):
             # Make phis shape = (nenvs, steps_per_batch, nfeatures)
             phis = phis.swapaxes(0,1)
+            obs = obs.swapaxes(0,1)
+
+            #DEBUGGING
+            #print("XXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
+            #print(phis.shape)
+            #print(obs.shape)
+            #print("XXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
 
             steps_per_batch = phis.shape[1]
             indexes = np.arange(steps_per_batch)
-
-            index_pairs = list(itertools.permutations(indexes, 2))
+            left_idxs = indexes[:int(len(indexes)/2)]
+            right_idxs = indexes[::-1][:int(len(indexes)/2)]
 
             for env in range(phis.shape[0]):
                 # make a minibatch
-                phi_is = np.zeros((len(index_pairs), phis.shape[2]))
-                phi_js = np.zeros((len(index_pairs), phis.shape[2]))
-                time_delta = np.zeros(len(index_pairs))
+                #obs_is = np.zeros((((half_idx,)+obs.shape[1::])))
+                #phi_js = np.zeros((half_idx, phis.shape[2]))
+                obs_is = obs[env, left_idxs]
+                phi_js = phis[env, right_idxs]
+                time_delta = abs(left_idxs - right_idxs)
 
-                # Create arrs
-                for idx,pair in enumerate(index_pairs):
-                    time_delta[idx] = abs(pair[0] - pair[1])
-                    phi_is[idx] = phis[env, pair[0], :]
-                    phi_js[idx] = phis[env, pair[1], :]
+                #print(obs_is.shape)
+                #print(phi_js.shape)
+                #print(time_delta.shape)
 
-                loss, train = sess.run([self.tsm_loss, tsm_train_step], feed_dict={self.train_model.ph_phi_i: phi_is, self.train_model.ph_phi_j: phi_js, self.time_delta: time_delta, LR:lr})
+                obs_is = np.repeat(obs_is, 4, axis=0)
+                phi_js = np.repeat(phi_js, 4, axis=0)
+                time_delta = np.repeat(time_delta, 4, axis=0)
+
+                tsm_out, loss, train = sess.run([self.train_model.tsm, self.tsm_loss, tsm_train_step], feed_dict={self.train_model.X: obs_is, self.train_model.ph_phi_j: phi_js, self.time_delta: time_delta, LR:lr})
+
                 print("TSM Loss: ", loss)
+                #print("Predss: ", tsm_out[0:6])
+                #print("Labels: ", time_delta[0:6])
 
 
         def save(save_path):
@@ -231,7 +246,7 @@ class Runner(object):
             mb_advs[t] = lastgaelam = delta + self.gamma * self.lam * nextnonterminal * lastgaelam
         mb_returns = mb_advs + mb_values
         return (*map(sf01, (mb_obs, mb_returns, mb_dones, mb_actions, mb_values, mb_neglogpacs)),
-            mb_states, epinfos), mb_phis
+            mb_states, epinfos), mb_phis, mb_obs
 # obs, returns, masks, actions, values, neglogpacs, states = runner.run()
 def sf01(arr):
     """
@@ -283,7 +298,7 @@ def learn(*, policy, env, nsteps, total_timesteps, ent_coef, lr,
         frac = 1.0 - (update - 1.0) / nupdates
         lrnow = lr(frac)
         cliprangenow = cliprange(frac)
-        (obs, returns, masks, actions, values, neglogpacs, states, epinfos), phis = runner.run(update) #pylint: disable=E0632
+        (obs, returns, masks, actions, values, neglogpacs, states, epinfos), phis, og_obs = runner.run(update) #pylint: disable=E0632
         returns_summary = tf.summary.scalar('Returns', returns.mean())
         epinfobuf.extend(epinfos)
         mblossvals = []
@@ -302,7 +317,7 @@ def learn(*, policy, env, nsteps, total_timesteps, ent_coef, lr,
                     mbinds = inds[start:end]
                     slices = (arr[mbinds] for arr in (obs, returns, masks, actions, values, neglogpacs))
                     mblossvals.append(model.train(update, lrnow, cliprangenow, *slices))
-                    model.train_tsm(phis, lrnow)
+                    model.train_tsm(og_obs, phis, lrnow)
         else: # recurrent version
             assert nenvs % nminibatches == 0
             envsperbatch = nenvs // nminibatches
