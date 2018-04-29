@@ -146,7 +146,6 @@ class CnnPolicy_TSM(object):
         with tf.variable_scope("TSM", reuse=reuse):
             tsm_h = fc(combined_phi, 'tsm_h', 1024)
             tsm = tf.squeeze(fc(tsm_h, 'tsm', 1))
-            print(tsm.shape)
 
         self.pdtype = make_pdtype(ac_space)
         self.pd = self.pdtype.pdfromflat(pi)
@@ -156,7 +155,6 @@ class CnnPolicy_TSM(object):
         self.initial_state = None
 
         def step(ob, *_args, **_kwargs):
-            print(ob.shape)
             phi, a, v, neglogp = sess.run([h, a0, vf, neglogp0], {X:ob})
             return phi, a, v, self.initial_state, neglogp
 
