@@ -121,11 +121,13 @@ class Model(object):
                 phi_js = np.repeat(phi_js, 4, axis=0)
                 time_delta = np.repeat(time_delta, 4, axis=0)
 
-                tsm_out, loss, train = sess.run([self.train_model.tsm, self.tsm_loss, tsm_train_step], feed_dict={self.train_model.X: obs_is, self.train_model.ph_phi_j: phi_js, self.time_delta: time_delta, LR:lr})
+                time_delta_norm = time_delta/time_delta.max()
+
+                tsm_out, loss, train = sess.run([self.train_model.tsm, self.tsm_loss, tsm_train_step], feed_dict={self.train_model.X: obs_is, self.train_model.ph_phi_j: phi_js, self.time_delta: time_delta_norm, LR:lr})
 
                 print("TSM Loss: ", loss)
-                #print("Predss: ", tsm_out[0:6])
-                #print("Labels: ", time_delta[0:6])
+                print("Predss: ", tsm_out[::64]*time_delta.max())
+                print("Labels: ", time_delta[::64])
 
 
         def save(save_path):
