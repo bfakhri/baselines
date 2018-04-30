@@ -1,0 +1,46 @@
+import numpy as np
+import gym
+
+from PIL import Image
+
+class Gymmer():
+    def __init__(self, env_id):
+        self.env = gym.make(env_id)
+        self.is_done = True
+
+    def produce_frames(self, size):
+        frames = np.zeros((size,) +self.env.observation_space.shape)
+        for s in range(1,size):
+            if(self.is_done):
+                observation = self.env.reset()
+                self.is_done = False
+                #self.env.render()
+                frames[s] = observation
+            else:
+                action = self.env.action_space.sample()
+                observation, reward, self.is_done, info = self.env.step(action)
+                #self.env.render()
+                frames[s] = observation
+
+        return frames
+
+
+    def get_batch(self, size):
+        frames = self.produce_frames(size)
+        indexes = np.arange(size)
+        left_idxs = indexes[:int(len(indexes)/2)]
+        right_idxs = indexes[::-1][:int(len(indexes)/2)]
+        reordered = np.empty((left_idxs.size + right_idxs.size,), dtype=left_idxs.dtype)
+        reordered[0::2] = left_idxs
+        reordered[1::2] = right_idxs
+
+        batch = frames[reordered]
+
+        times = abs(right_idxs - left_idxs)
+        times = times/times.max()
+
+
+
+        return batch, times 
+
+
